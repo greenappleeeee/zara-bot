@@ -64,23 +64,21 @@ def urun_stokta_mi(urun_url):
         return False
 
 async def stok_kontrol_job(application):
-    logger.info("Stok kontrol işi başladı")
     global stok_durum, urunler
     for urun in urunler:
         stokta = urun_stokta_mi(urun["url"])
         onceki_durum = stok_durum.get(urun["url"], None)
+
+        if onceki_durum is None:
+            # İlk kontrol, sadece stok durumunu kaydet, mesaj atma
+            stok_durum[urun["url"]] = stokta
+            continue
+
         if onceki_durum != stokta:
             stok_durum[urun["url"]] = stokta
             if stokta:
                 mesaj = f"🔥 {urun['name']} stoklara girdi!\nLink: {urun['url']}"
                 await application.bot.send_message(chat_id=CHAT_ID, text=mesaj)
-
-def ping_self():
-    try:
-        requests.get("http://127.0.0.1:8080/")
-        logger.info("Ping atıldı.")
-    except Exception as e:
-        logger.error(f"Ping hatası: {e}")
 
 # --- Komutlar ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -138,12 +136,16 @@ async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
         json.dump(urunler, f, ensure_ascii=False, indent=2)
     await update.message.reply_text("Ürün silindi.")
 
-application = None  # global olarak tanımlıyoruz
+# --- Ping (self-ping) fonksiyonu ---
+def ping_self():
+    try:
+        requests.get("http://127.0.0.1:8080/")
+        logger.info("Ping atıldı.")
+    except Exception as e:
+        logger.error(f"Ping hatası: {e}")
 
+# --- Main ---
 async def main():
-    global application
-
-    # Flask sunucusunu başlat
     Thread(target=run_flask).start()
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -154,12 +156,8 @@ async def main():
     application.add_handler(CommandHandler("ekle", ekle))
     application.add_handler(CommandHandler("sil", sil))
 
-    # Asenkron işi sync wrapper ile scheduler'a ekliyoruz
-    def stok_kontrol_job_sync():
-        asyncio.run(stok_kontrol_job(application))
-
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(stok_kontrol_job_sync, "interval", minutes=2)
+    scheduler.add_job(stok_kontrol_job, "interval", minutes=2, args=[application])
     scheduler.add_job(ping_self, "interval", minutes=5)
     scheduler.start()
 
@@ -167,5 +165,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
